@@ -2,9 +2,10 @@ const fs = require('fs');
 const lockfile = require('@yarnpkg/lockfile');
 const axios = require('axios');
 
-const LOCK_FILE_PATH = 'yarn.lock';
-const CACHE_FILE_PATH = "cache.txt";
+const LOCK_FILE_PATH = './lock/yarn.lock';
+const CACHE_FILE_PATH = 'cache.txt';
 const DAYS_DIFF_MIN = 30;
+const REGISTRY_URL = 'https://registry.npmjs.org/';
 
 main();
 
@@ -16,15 +17,13 @@ async function main() {
 
 	const packageVersionData = getVerisons(lockfileJson, packageTimeData);
 	
-	const packagesNames = Object.keys(packageTimeData); 
-	console.log("Packages found:", packagesNames.length);
-
-	await getPackagesData(packagesNames, packageTimeData);
+	await getPackagesData(packageTimeData);
 	
 	printFreshPackages(packageVersionData, packageTimeData);
 }
 
 function getVerisons (lockfileJson, packageTimeData) {
+	console.log('Different dependencies versions found in lockfile:', Object.keys(lockfileJson.object).length);
 	const packageVersionData = {};
 	Object.keys(lockfileJson.object).forEach(
 		nameWithVersion => {
@@ -43,7 +42,7 @@ function loadCache () {
 	try {
 		const cacheFile = fs.readFileSync(CACHE_FILE_PATH, 'utf8');
 		const packageTimeData = JSON.parse(cacheFile);
-		console.log('Cache loaded.');
+		console.log('Cache loaded. Packages in cache:', Object.keys(packageTimeData).length);
 		return packageTimeData;
 	} catch {
 		console.log('Error in cache file. Cache cleared.');
@@ -51,11 +50,13 @@ function loadCache () {
 	}
 }
 
-async function getPackagesData (packagesNames, packageTimeData) {
+async function getPackagesData (packageTimeData) {
+	const packagesNames = Object.keys(packageTimeData); 
+
 	for (let i = 0; i < packagesNames.length; i++) {
 		const name = packagesNames[i];
 		if (packageTimeData[name]) continue;
-		const result = await axios.get("https://registry.npmjs.org/" + name);
+		const result = await axios.get(REGISTRY_URL + name);
 		packageTimeData[name] = result.data.time;
 		console.log(`Data recieved for: ${name} ${i+1}/${packagesNames.length}`);
 		fs.writeFileSync(CACHE_FILE_PATH, JSON.stringify(packageTimeData))
@@ -65,6 +66,7 @@ async function getPackagesData (packagesNames, packageTimeData) {
 
 function printFreshPackages(packageVersionData, packageTimeData) {
 	const now = Date.now();
+	const result = [];
 	Object.keys(packageVersionData).forEach(
 		name => {
 			const version = packageVersionData[name];
@@ -74,9 +76,14 @@ function printFreshPackages(packageVersionData, packageTimeData) {
 			const diffTime = Math.abs(now - dateObj);
 			const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 			
-			if(diffDays < DAYS_DIFF_MIN) {
-				console.log(`Package ${diffDays} days old: ${name}@${version} - ${dateObj.toLocaleDateString()}`);
+			if (diffDays < DAYS_DIFF_MIN) {
+				result.push(`Package ${diffDays} days old: ${name}@${version} - ${dateObj.toLocaleDateString()}`);
 			}
 		}
 	);
+	if (result.length > 0) {
+		result.forEach(row => console.log(row));
+	} else {
+		console.log('No fresh packages found.');
+	}
 }
