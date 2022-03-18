@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@yarnpkg/lockfile": "1.1.0",
+    "axios": "0.25.0"
+  }
+}
