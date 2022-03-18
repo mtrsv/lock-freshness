@@ -4,7 +4,7 @@ const axios = require('axios');
 
 const LOCK_FILE_PATH = 'yarn.lock';
 const CACHE_FILE_PATH = "cache.txt";
-const DAYS_DIFF_MIN = 150;
+const DAYS_DIFF_MIN = 30;
 
 main();
 
