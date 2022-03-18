@@ -2,77 +2,107 @@ const fs = require('fs');
 const lockfile = require('@yarnpkg/lockfile');
 const axios = require('axios');
 
-const LOCK_FILE_PATH = './lock/yarn.lock';
+const LOCK_FILE_PATH = './lockfile/yarn.lock';
+const LOCK_FILE_PATH_JSON = './lockfile/package-lock.json';
 const CACHE_FILE_PATH = 'cache.txt';
+
 const DAYS_DIFF_MIN = 30;
 const REGISTRY_URL = 'https://registry.npmjs.org/';
 
 main();
 
 async function main() {
-	const file = fs.readFileSync(LOCK_FILE_PATH, 'utf8');
-	const lockfileJson = lockfile.parse(file);
-	
-	const packageTimeData = loadCache();
+	const lockfileJson = getLockfileJson();
+	if(!lockfileJson) return;
 
-	const packageVersionData = getVerisons(lockfileJson, packageTimeData);
+	const packagesReleaseData = loadCache();
+	const lockfilePackageData = getVersions(lockfileJson, packagesReleaseData);
+	await fetchPackagesData(lockfilePackageData, packagesReleaseData);
 	
-	await getPackagesData(packageTimeData);
-	
-	printFreshPackages(packageVersionData, packageTimeData);
+	printFreshPackages(lockfilePackageData, packagesReleaseData);
 }
 
-function getVerisons (lockfileJson, packageTimeData) {
-	console.log('Different dependencies versions found in lockfile:', Object.keys(lockfileJson.object).length);
-	const packageVersionData = {};
-	Object.keys(lockfileJson.object).forEach(
+function getLockfileJson() {
+	try {
+		const file = fs.readFileSync(LOCK_FILE_PATH, 'utf8');
+		return lockfile.parse(file).object;
+	} catch  {
+		try {
+			const file = fs.readFileSync(LOCK_FILE_PATH_JSON, 'utf8');
+			return JSON.parse(file).dependencies;
+		} catch {
+			console.log('No correct lockfile found in ./lockfile/ folder.');
+			return null;
+		}
+	}
+}
+
+function getVersions (lockfileJson, packagesReleaseData) {
+	console.log('Different dependencies versions found in lockfile:', Object.keys(lockfileJson).length);
+	const lockfilePackageData = {};
+	Object.keys(lockfileJson).forEach(
 		nameWithVersion => {
 			const name = nameWithVersion.replace(/(.+)@.+/,'$1');
-			packageVersionData[name] = lockfileJson.object[nameWithVersion].version;
-			
-			if (!packageTimeData[name]) {
-				packageTimeData[name] = null;
-			}
+			lockfilePackageData[name] = lockfileJson[nameWithVersion].version;
 		}
 	);
-	return packageVersionData;
+	return lockfilePackageData;
 }
 
 function loadCache () {
 	try {
 		const cacheFile = fs.readFileSync(CACHE_FILE_PATH, 'utf8');
-		const packageTimeData = JSON.parse(cacheFile);
-		console.log('Cache loaded. Packages in cache:', Object.keys(packageTimeData).length);
-		return packageTimeData;
+		const packagesReleaseData = JSON.parse(cacheFile);
+		console.log('Cache loaded. Packages in cache:', Object.keys(packagesReleaseData).length);
+		return packagesReleaseData;
 	} catch {
 		console.log('Error in cache file. Cache cleared.');
 		return {};
 	}
 }
 
-async function getPackagesData (packageTimeData) {
-	const packagesNames = Object.keys(packageTimeData); 
+async function fetchPackagesData (lockfilePackageData, packagesReleaseData) {
+	const packagesNames = Object.keys(lockfilePackageData); 
 
 	for (let i = 0; i < packagesNames.length; i++) {
 		const name = packagesNames[i];
-		if (packageTimeData[name]) continue;
-		const result = await axios.get(REGISTRY_URL + name);
-		packageTimeData[name] = result.data.time;
+		if (packagesReleaseData[name]) continue;
+		let result = null;
+		try {
+			result = await axios.get(REGISTRY_URL + name);
+		} catch (e) {
+			console.log('Problems with getting package:', name);
+			console.log('  ', e.message);
+			console.log('Package skipped. You can try again.')
+			continue;
+		}
+		
+		packagesReleaseData[name] = result.data.time;
 		console.log(`Data recieved for: ${name} ${i+1}/${packagesNames.length}`);
-		fs.writeFileSync(CACHE_FILE_PATH, JSON.stringify(packageTimeData))
+		fs.writeFileSync(CACHE_FILE_PATH, JSON.stringify(packagesReleaseData))
 	}
 	console.log('');
 }
 
-function printFreshPackages(packageVersionData, packageTimeData) {
+function printFreshPackages(lockfilePackageData, packagesReleaseData) {
 	const now = Date.now();
 	const result = [];
-	Object.keys(packageVersionData).forEach(
+	Object.keys(lockfilePackageData).forEach(
 		name => {
-			const version = packageVersionData[name];
-			const date = packageTimeData[name][version] || packageTimeData[name];
+			const version = lockfilePackageData[name];
+			const packageData = packagesReleaseData[name];
+			if (!packageData) {
+				console.log('No info about package:', name);
+				return;
+			}
 			
-			const dateObj = new Date(date);
+			const dateString = packageData[version];
+			if (!dateString) {
+				console.log('No info about version:', `${name}@${version}`);
+				return;
+			}
+
+			const dateObj = new Date(dateString);
 			const diffTime = Math.abs(now - dateObj);
 			const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 			
